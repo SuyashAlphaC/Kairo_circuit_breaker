@@ -5,8 +5,15 @@ version = 1
 name = "kairo_circuit_breaker"
 version = "0.1.0"
 dependencies = [
+ "sncast_std",
  "snforge_std",
 ]
+
+[[package]]
+name = "sncast_std"
+version = "0.48.1"
+source = "registry+https://scarbs.xyz/"
+checksum = "sha256:52e65441cbd8b7daf24d2d09db8cd1dcf9e4769d8a9a0049e22643071f967309"
 
 [[package]]
 name = "snforge_scarb_plugin"

@@ -1,32 +1,23 @@
-/// Interface representing `HelloContract`.
-/// This interface allows modification and retrieval of the contract balance.
-#[starknet::interface]
-pub trait IHelloStarknet<TContractState> {
-    /// Increase contract balance.
-    fn increase_balance(ref self: TContractState, amount: felt252);
-    /// Retrieve contract balance.
-    fn get_balance(self: @TContractState) -> felt252;
+
+pub mod interfaces {
+    pub mod circuit_breaker_interface;
 }
 
-/// Simple contract for managing balance.
-#[starknet::contract]
-mod HelloStarknet {
-    use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 
-    #[storage]
-    struct Storage {
-        balance: felt252,
-    }
+pub mod circuit_breaker;
 
-    #[abi(embed_v0)]
-    impl HelloStarknetImpl of super::IHelloStarknet<ContractState> {
-        fn increase_balance(ref self: ContractState, amount: felt252) {
-            assert(amount != 0, 'Amount cannot be 0');
-            self.balance.write(self.balance.read() + amount);
-        }
 
-        fn get_balance(self: @ContractState) -> felt252 {
-            self.balance.read()
-        }
-    }
+pub mod components {
+    pub mod circuit_breaker_component;
 }
+
+
+pub mod mock {
+    pub mod mock_vault;
+}
+
+
+pub use interfaces::circuit_breaker_interface::{ICircuitBreaker, ICircuitBreakerDispatcher, ICircuitBreakerDispatcherTrait};
+pub use circuit_breaker::*;
+pub use components::circuit_breaker_component::CircuitBreakerComponent;
+pub use mock::mock_vault::{IMockVault, IMockVaultDispatcher, IMockVaultDispatcherTrait, MockVault};
