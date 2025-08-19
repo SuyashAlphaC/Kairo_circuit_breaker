@@ -271,8 +271,6 @@ kairo_circuit_breaker/
 - [Cairo Book](https://book.cairo-lang.org/)
 - [Starknet Documentation](https://docs.starknet.io/)
 - [EIP-7265 Standard](https://eips.ethereum.org/EIPS/eip-7265)
-- [Integration Guide](./docs/integration-guide.md)
-- [VS Code Setup Guide](./docs/setup-guide.md)
 
 ## 📄 License
 
