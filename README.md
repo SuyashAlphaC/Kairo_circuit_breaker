@@ -195,7 +195,6 @@ kairo_circuit_breaker/
 │       └── mock_vault.cairo                # Example implementation
 ├── tests/
 │   ├── test_circuit_breaker.cairo          # Test suite
-│   └── deployment_script.cairo             # Deployment helpers
 ├── Scarb.toml                              # Project configuration
 └── README.md                               # This file
 ```
