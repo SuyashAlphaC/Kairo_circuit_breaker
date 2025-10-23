@@ -1,287 +1,179 @@
+
+
 # Kairo Circuit Breaker 🛡️
 
-A modular, plug-and-play Circuit Breaker smart contract system for the Starknet ecosystem, designed to protect DeFi protocols from sudden market shocks.
+An advanced, on-chain security system for Starknet DeFi protocols, designed to prevent economic exploits like flash loan-based accumulator manipulation. This system is battle-tested against a precise recreation of the February 2025 zkLend hack, providing robust, real-time protection for user funds.
 
 ## 🎯 Overview
 
-The Kairo Circuit Breaker acts as an on-chain "Fire Alarm" for DeFi protocols. When connected to off-chain monitoring systems (the "Smoke Detectors"), it can automatically pause critical functions to protect user funds during market emergencies.
+The Kairo Circuit Breaker is not just a simple pause button; it's a sophisticated liquidity monitoring and enforcement system. It operates as a "smart vault" that sits between a DeFi protocol and its users.
+
+By tracking the net flow of assets over a rolling time window, it can automatically detect and neutralize attacks—such as the flash loan "donation" attack used to exploit zkLend. When an anomalous outflow is detected, the breaker trips, locking the attacker's (and subsequent users') funds instead of allowing the exploit to drain the protocol.
+
+This "delayed settlement" mechanism freezes the stolen funds, giving a multi-sig of "Guardians" or the protocol Admin time to review the situation and safely manage the recovery process.
 
 ### Key Features
 
-- **EIP-7265 Compliant**: Follows established circuit breaker standards
-- **Modular Design**: Easy integration with existing protocols
-- **Automated Triggers**: Backend API integration for real-time monitoring
-- **Secure Authentication**: Cryptographic signature verification
-- **Gas Efficient**: Minimal overhead on protected functions
-- **Emergency Overrides**: Critical functions can bypass circuit breaker when needed
+  * **Advanced Rate Limiting**: Monitors net asset flow (inflow vs. outflow) on a per-asset basis, tripping when outflows exceed a configurable percentage of total liquidity within a rolling time window.
+  * **Exploit-Specific Prevention**: Explicitly designed to defeat accumulator manipulation and flash loan donation attacks.
+  * **Delayed Settlement (Fund Locking)**: On breach, funds are not reverted. They are securely locked within the circuit breaker contract, preventing the attacker from escaping with the capital.
+  * **Guardian Multi-Sig**: A decentralized set of Guardians can perform emergency actions, such as pausing the system or proposing and executing a payout of locked funds after an attack.
+  * **Mainnet Fork Tested**: The protection mechanism has been proven effective by running tests on a Starknet mainnet fork, precisely replicating and preventing the *exact* zkLend attack sequence.
+  * **Modular Integration**: Easily integrated into any protocol using a simple `ProtectedContractComponent` that wraps standard token transfers.
+
+-----
 
 ## 🏗️ Architecture
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Off-chain     │───▶│  Circuit Breaker │───▶│  Your Protocol  │
-│   Monitoring    │    │    Contract      │    │    Contract     │
-│   (Backend API) │    │                  │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                       ┌──────────────┐
-                       │   Events &   │
-                       │ Notifications│
-                       └──────────────┘
-```
+The system works by wrapping a protocol's core deposit and withdrawal functions. All asset flows are routed through the `CircuitBreaker` contract, which consults its internal `Limiter` logic before allowing a transfer.
+-----
 
-### Components
+## 📁 Core Components
 
-1. **Circuit Breaker Contract** (`circuit_breaker.cairo`)
-   - Core pause/resume functionality
-   - Owner management and access control
-   - API integration with signature verification
+  * `src/core/circuit_breaker.cairo`: The main contract that holds all logic, state, and locked funds. It manages asset limiters, protected contracts, and guardian/admin roles.
+  * `src/components/protected_contract.cairo`: The simple "plug-and-play" component for integrating a protocol with the circuit breaker.
+  * `src/utils/limiter_lib.cairo`: The core rate-limiting logic. It uses a linked list of time-stamped "ticks" to track net liquidity changes over a defined `withdrawal_period`.
+  * `src/interfaces/circuit_breaker_interface.cairo`: The public ABI for the circuit breaker.
+  * `src/mocks/`: Mock contracts for testing, including:
+      * `realistic_zklend_vulnerable.cairo`: A recreation of the vulnerable zkLend contract.
+      * `realistic_zklend_protected.cairo`: An example of how to protect the zkLend contract using the `ProtectedContractComponent`.
 
-2. **Circuit Breaker Component** (`circuit_breaker_component.cairo`)
-   - Reusable component for easy protocol integration
-   - Modifier-like functionality for protected functions
+-----
 
-3. **Mock Vault Contract** (`mock_vault.cairo`)
-   - Example implementation showing integration patterns
-   - Demonstrates protected vs emergency functions
+## 🚀 Quick Start (Integration)
 
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Rust (latest stable)
-- Scarb (Cairo package manager)
-- Starknet Foundry (for testing)
-- VS Code with Cairo extension
-
-### Installation
-
-1. **Clone and setup:**
-   ```bash
-   mkdir kairo_circuit_breaker && cd kairo_circuit_breaker
-   scarb init --name kairo_circuit_breaker
-   ```
-
-2. **Install dependencies and build:**
-   ```bash
-   scarb build
-   ```
-
-3. **Run tests:**
-   ```bash
-   snforge test
-   ```
-
-### Basic Integration
+To protect your protocol, you integrate the `ProtectedContractComponent` and use its functions for all token movements.
 
 ```cairo
-#[starknet::contract]
-mod YourProtocol {
-    use kairo_circuit_breaker::CircuitBreakerComponent;
+// In your protocol's contract
+use circuit_breaker::components::protected_contract::ProtectedContractComponent;
 
-    component!(path: CircuitBreakerComponent, storage: circuit_breaker, event: CircuitBreakerEvent);
+component!(path: ProtectedContractComponent, storage: protected_contract, event: ProtectedContractEvent);
 
-    #[abi(embed_v0)]
-    impl CircuitBreakerComponentImpl = CircuitBreakerComponent::CircuitBreakerComponentImpl<ContractState>;
+use ProtectedContractComponent::ProtectedContractTrait;
+impl ProtectedContractInternalImpl = ProtectedContractComponent::ProtectedContractImpl<ContractState>;
 
-    // Protect critical functions
-    fn withdraw(ref self: ContractState, amount: u256) {
-        let function_selector = selector!("withdraw");
-        self.circuit_breaker.when_not_paused(function_selector);
+#[constructor]
+fn constructor(ref self: ContractState, circuit_breaker_address: ContractAddress) {
+    // Link to the deployed CircuitBreaker
+    self.protected_contract.set_circuit_breaker(circuit_breaker_address);
+}
+
+#[abi(embed_v0)]
+impl YourProtocol of IYourProtocol<ContractState> {
+    
+    // Example: Protected Deposit
+    fn deposit(ref self: ContractState, token: ContractAddress, amount: u256) {
+        let caller = get_caller_address();
+        let this_contract = get_contract_address();
         
-        // Your withdrawal logic here...
+        // Your logic here...
+        
+        // 1. Use the CB-wrapped transfer for INFLOW
+        self.protected_contract.cb_inflow_safe_transfer_from(
+            token, caller, this_contract, amount
+        );
+        
+        // Your logic here...
+    }
+
+    // Example: Protected Withdrawal
+    fn withdraw(ref self: ContractState, token: ContractAddress, amount: u256) {
+        let caller = get_caller_address();
+        
+        // Your logic here...
+        
+        // 2. Use the CB-wrapped transfer for OUTFLOW
+        self.protected_contract.cb_outflow_safe_transfer(
+            token, 
+            caller, 
+            amount, 
+            false // false = Don't revert on breach, lock funds instead
+        );
+        
+        // Your logic here...
     }
 }
 ```
 
+-----
+
 ## 📋 Core Functions
 
-### Circuit Breaker Contract
+### Protocol (Integration)
 
-| Function | Description | Access |
-|----------|-------------|--------|
-| `pause(target_contract, function_selector)` | Pauses a specific function | Owner only |
-| `resume(target_contract, function_selector)` | Resumes a paused function | Owner only |
-| `is_paused(target_contract, function_selector)` | Checks if function is paused | Public view |
-| `check_and_trip(...)` | Automated trigger from backend API | Public (with signature) |
+  * `cb_inflow_safe_transfer_from(token, sender, recipient, amount)`: Used for deposits. Transfers funds and notifies the circuit breaker of an *inflow*.
+  * `cb_outflow_safe_transfer(token, recipient, amount, revert_on_rate_limit)`: Used for withdrawals. Transfers funds to the circuit breaker, which then checks limits and either sends to the recipient or *locks* the funds.
 
-### Integration Component
+### Admin Functions
 
-| Function | Description | Usage |
-|----------|-------------|-------|
-| `when_not_paused(function_selector)` | Reverts if function is paused | In protected functions |
-| `set_circuit_breaker(address)` | Links to circuit breaker contract | During setup |
+  * `register_asset(asset, threshold_bps, min_amount_to_limit)`: Registers a new token with its specific rate-limiting parameters.
+  * `add_protected_contracts(contracts: Array<ContractAddress>)`: Authorizes your protocol contracts to interact with the circuit breaker.
+  * `set_guardian_threshold(new_threshold: u32)`: Sets the number of Guardian votes needed to approve a multi-sig action.
+  * `override_rate_limit(asset, max_payouts)`: Admin-only function to force-process the payout queue for locked funds.
+  * `mark_as_not_operational()`: Pauses the entire system.
+  * `migrate_funds_after_exploit(assets, recipient)`: Emergency function to drain all funds from the circuit breaker to a secure recovery address after a catastrophic event.
+
+### Guardian Multi-Sig Functions
+
+  * `guardian_emergency_pause()`: A guardian can unilaterally pause the entire system.
+  * `guardian_propose_rate_limit_override(proposal_id)`: Proposes a new payout action to release locked funds.
+  * `guardian_vote_rate_limit_override(proposal_id, approve: bool)`: Casts a vote on an active proposal.
+  * `execute_guardian_rate_limit_override(proposal_id, asset, max_payouts)`: If a proposal has enough votes, any guardian can execute it, processing the payout queue for the specified asset.
+
+### Public View Functions
+
+  * `is_rate_limited()`: Returns `true` if the circuit breaker has been globally tripped.
+  * `is_rate_limit_triggered(asset)`: Checks the status of a specific asset's limiter.
+  * `locked_funds(recipient, asset)`: Shows the amount of funds a specific user has locked in the system.
+  * `is_guardian(address)`: Checks if an address is a guardian.
+
+-----
 
 ## 🧪 Testing
 
-### Run All Tests
-```bash
-snforge test
-```
+The test suite is a core feature, proving the system's effectiveness against real-world exploits.
 
-### Run Specific Tests
-```bash
-snforge test test_circuit_breaker_deployment
-snforge test test_pause_and_resume
-snforge test test_mock_vault_integration
-```
+  * `tests/test_exact_zklend_hack.cairo`: A self-contained test that:
+    1.  Deploys a vulnerable mock of zkLend.
+    2.  Executes the *exact* 10-cycle flash loan donation attack to manipulate the lending accumulator.
+    3.  Confirms the exploit succeeds and value is extracted.
+    4.  Deploys a *protected* version of zkLend.
+    5.  Runs the *same attack* and proves the circuit breaker trips, blocks the attack, and contains the value.
+  * `tests/test_simple_mainnet_fork.cairo`:
+      * Forks Starknet mainnet to the *exact block* of the zkLend hack.
+      * Deploys the `CircuitBreaker` and a protected zkLend contract onto this forked state.
+      * Uses the *actual attacker's address* to re-run the exploit.
+      * Proves that the `CircuitBreaker` successfully detects and prevents the real attack in a live environment.
+  * `tests/test_guardian_advanced.cairo`: Verifies the full multi-sig workflow, including proposing, voting (with mixed votes), and executing a fund recovery override.
+  * `tests/test_contract.cairo`: Core unit tests for all basic functions, including triggering a rate limit, locking funds, and admin overrides.
 
-### Test Coverage
+-----
 
-- ✅ Circuit breaker deployment
-- ✅ Pause/resume functionality
-- ✅ Access control verification
-- ✅ Mock vault integration
-- ✅ Emergency function bypass
-- ✅ Ownership management
-- ✅ Event emission
+## 🛡️ Security & Logic Deep Dive
 
-## 📖 API Reference
+1.  **Net Flow Tracking**: The `LimiterLib` doesn't just track outflows. It tracks the *net flow* (deposits - withdrawals). This prevents an attacker from "priming" the limit by depositing a large amount and then withdrawing it all. The system tracks net change relative to the *peak liquidity* during the `withdrawal_period`.
+2.  **Breach Mechanism**: A breach occurs if `current_liquidity < (peak_liquidity * retention_percentage)`. For example, if a pool has a 70% retention threshold (`min_liq_retained_bps = 7000`) and peaked at 10,000 tokens, the circuit breaker will trip if the liquidity drops below 7,000 tokens within the time window.
+3.  **Delayed Settlement**: When the breaker trips (`should_lock_funds = true`), the user's withdrawal is *not* sent to them. Instead, it is added to their `locked_funds` balance and added to a `pending_withdrawals` queue. This is non-reverting and gas-efficient.
+4.  **Secure Recovery**: These locked funds are now frozen. They can only be released by a "payout" transaction. This requires a human-in-the-loop (an Admin or the Guardian multi-sig) to assess the situation. An Admin or the Guardians can then execute the payout, which safely processes the queue and sends the (now-verified) funds to the users.
 
-### Backend Integration
+-----
 
-Your monitoring backend should:
+## 🚀 Deployment & Setup
 
-1. **Monitor risk factors** (price volatility, liquidity, etc.)
-2. **Generate API responses:**
-   ```json
-   {
-     "status": "TRIP"  // or "SAFE"
-   }
-   ```
-3. **Sign responses** with your API key
-4. **Call `check_and_trip()`** when threats are detected
+1.  **Build Contracts**: `scarb build`
+2.  **Deploy CircuitBreaker**: Deploy `circuit_breaker.cairo`. The constructor requires:
+      * `admin`: The main admin/owner address.
+      * `rate_limit_cooldown_period`: Time in seconds before a tripped breaker can be reset (e.g., 3 days).
+      * `withdrawal_period`: The rolling time window for tracking liquidity (e.g., 4 hours).
+      * `tick_length`: The time slice for grouping transactions (e.g., 5 minutes).
+      * `eth_token_address`: The address of ETH/WETH for native asset transfers.
+3.  **Deploy Your Protocol**: Deploy your contract, passing the `CircuitBreaker`'s address to its constructor.
+4.  **Configure CircuitBreaker**:
+      * Call `add_protected_contracts()` to whitelist your protocol's address.
+      * Call `register_asset()` for each token (e.g., WSTETH, USDC) you want to protect.
+      * Call `add_guardian()` to add your multi-sig members.
+      * Call `set_guardian_threshold()` to set the number of votes required.
 
-### Signature Verification
+-----
 
-```python
-# Pseudocode for backend
-api_response = '{"status": "TRIP"}'
-response_hash = poseidon_hash(api_response)
-signature = pedersen(api_key_hash, response_hash)
-```
-
-## 🛡️ Security Features
-
-### Access Control
-- Owner-only pause/resume functions
-- Signature verification for API responses
-- Secure ownership transfer mechanism
-
-### Circuit Breaker Logic
-- Per-function pause granularity
-- Emergency override capabilities
-- Event logging for transparency
-
-### Best Practices
-- Always provide emergency functions
-- Implement proper access controls
-- Test integration thoroughly
-- Monitor gas costs
-
-## 📁 Project Structure
-
-```
-kairo_circuit_breaker/
-├── src/
-│   ├── lib.cairo                           # Main library exports
-│   ├── interfaces/
-│   │   └── circuit_breaker_interface.cairo # Contract interfaces
-│   ├── circuit_breaker.cairo               # Core circuit breaker
-│   ├── components/
-│   │   └── circuit_breaker_component.cairo # Integration component
-│   └── mock/
-│       └── mock_vault.cairo                # Example implementation
-├── tests/
-│   ├── test_circuit_breaker.cairo          # Test suite
-├── Scarb.toml                              # Project configuration
-└── README.md                               # This file
-```
-
-## 🚀 Deployment
-
-### Testnet Deployment
-
-1. **Build contracts:**
-   ```bash
-   scarb build
-   ```
-
-2. **Deploy circuit breaker:**
-   ```bash
-   starkli deploy target/dev/CircuitBreaker.contract_class.json <owner_address> <api_key_hash>
-   ```
-
-3. **Deploy your protocol with circuit breaker component**
-
-4. **Link contracts by calling `set_circuit_breaker()`**
-
-### Mainnet Considerations
-
-- Audit all contracts thoroughly
-- Test on testnet extensively
-- Set up proper monitoring infrastructure
-- Have emergency procedures ready
-- Consider multi-sig ownership
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
-
-## 📊 Gas Estimates
-
-| Function | Gas Cost |
-|----------|----------|
-| `is_paused()` check | ~3,000 gas |
-| `pause()` | ~50,000 gas |
-| `resume()` | ~35,000 gas |
-| `when_not_paused()` | ~5,000 gas |
-
-## 🔧 Troubleshooting
-
-### Common Issues
-
-1. **"Function is paused by circuit breaker"**
-   - Function is currently paused
-   - Use emergency function or wait for resume
-
-2. **"Only owner can call this function"**
-   - Caller is not the contract owner
-   - Check ownership with `get_owner()`
-
-3. **"Invalid signature"**
-   - API response signature verification failed
-   - Check API key hash and signature generation
-
-### Debug Tips
-
-- Use `scarb build` to check for compilation errors
-- Add `println!` statements for debugging tests
-- Verify contract addresses are correct
-- Check function selectors match exactly
-
-## 📚 Resources
-
-- [Cairo Book](https://book.cairo-lang.org/)
-- [Starknet Documentation](https://docs.starknet.io/)
-- [EIP-7265 Standard](https://eips.ethereum.org/EIPS/eip-7265)
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙋‍♂️ Support
-
-For questions, issues, or contributions:
-- Open an issue on GitHub
-- Join the Starknet Discord
-- Check the documentation
-
----
-
-**⚠️ Security Notice**: This is experimental software. Always conduct thorough audits before using in production environments with real funds.
